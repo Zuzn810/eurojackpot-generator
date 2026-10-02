@@ -57,27 +57,30 @@ async function fetchOnce(url, timeoutMs) {
   return res;
 }
 
-async function fetchYear(year) {
+async function fetchYear(year, timeoutMs) {
   const url = `https://www.lotto.net/eurojackpot/results/${year}`;
-  let lastErr;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const res = await fetchOnce(url, 8000);
-      if (!res.ok) return { year, draws: [], httpStatus: res.status };
-      const html = await res.text();
-      return { year, draws: parseYearHtml(html) };
-    } catch (err) {
-      lastErr = err;
-    }
+  try {
+    const res = await fetchOnce(url, timeoutMs);
+    if (!res.ok) return { year, draws: [], httpStatus: res.status };
+    const html = await res.text();
+    return { year, draws: parseYearHtml(html) };
+  } catch (err) {
+    return { year, draws: [], error: describeError(err) };
   }
-  return { year, draws: [], error: describeError(lastErr) };
 }
 
 exports.handler = async function () {
   const now = new Date();
   const year = now.getUTCFullYear();
   try {
-    const results = await Promise.all([fetchYear(year - 1), fetchYear(year)]);
+    // One request for the current year (fits Netlify's ~10s sync budget).
+    // Only also check last year's page during the first two weeks of
+    // January, to bridge draws from the very end of the previous year —
+    // kept short so it can't push the total past the function's time limit.
+    const results = [await fetchYear(year, 9000)];
+    if (now.getUTCMonth() === 0 && now.getUTCDate() <= 14) {
+      results.push(await fetchYear(year - 1, 3000));
+    }
 
     const byDate = {};
     results.forEach((r) => r.draws.forEach((d) => { byDate[d.date] = d; }));
